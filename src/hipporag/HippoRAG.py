@@ -133,6 +133,13 @@ class HippoRAG:
 
         self.graph = self.initialize_graph()
 
+        """
+        Xác định retreiver sử dụng
+        các store lưu embedding
+        - chunk_embedding_store - main retreiver - Embeddings của các đoạn văn bản
+        - entity_embedding_store - Cho graph entity-level retrieval - Embeddings của entities
+        - fact_embedding_store - Cho reasoning / fact retrieval - Embeddings của triples (facts)
+        """
         if self.global_config.openie_mode == 'offline':
             self.embedding_model = None
         else:
@@ -149,10 +156,13 @@ class HippoRAG:
                                                    os.path.join(self.working_dir, "fact_embeddings"),
                                                    self.global_config.embedding_batch_size, 'fact')
 
+        # Prompt formate
         self.prompt_template_manager = PromptTemplateManager(role_mapping={"system": "system", "user": "user", "assistant": "assistant"})
 
+        # File cache lưu kết quả trích xuất OpenIE
         self.openie_results_path = os.path.join(self.global_config.save_dir,f'openie_results_ner_{self.global_config.llm_name.replace("/", "_")}.json')
 
+        #re-ranker dựa trên DSPy (DeepSpeed + Prompt optimization) để sắp xếp lại kết quả retrieve.
         self.rerank_filter = DSPyFilter(self)
 
         self.ready_to_retrieve = False
@@ -161,9 +171,13 @@ class HippoRAG:
         self.rerank_time = 0
         self.all_retrieval_time = 0
 
+        #Ánh xạ entity → chunk chứa entity đó
         self.ent_node_to_chunk_ids = None
 
-
+    '''
+    initialize_graph(): tạo và quản lý graph tri thức (knowledge graph)
+    Graph này sau đó được dùng để entity retrieval, reasoning, và reranking trong pipeline HippoRAG
+    '''
     def initialize_graph(self):
         """
         Initializes a graph using a Pickle file if available or creates a new graph.
@@ -197,6 +211,14 @@ class HippoRAG:
             )
             return preloaded_graph
 
+    '''
+    🧩 pre_openie() được thiết kế để:
+        Nhận một danh sách docs (văn bản)
+        Xác định các đoạn/chunks chưa có embedding (missing_string_hash_ids)
+        Thực hiện Open Information Extraction (OpenIE) offline trên các chunks này
+        Gộp kết quả OpenIE mới với kết quả đã tồn tại
+        Lưu kết quả ra file nếu save_openie=True
+        Dừng thực thi với thông báo (assert False) nhắc người dùng chạy indexing online sau đó'''
     def pre_openie(self,  docs: List[str]):
         logger.info(f"Indexing Documents")
         logger.info(f"Performing OpenIE Offline")
@@ -215,6 +237,13 @@ class HippoRAG:
 
         assert False, logger.info('Done with OpenIE, run online indexing for future retrieval.')
 
+    '''
+    🧩 Mục đích của hàm
+        Nhận danh sách tài liệu (docs)
+        Trích xuất tri thức (OpenIE) từ các đoạn văn
+        Mã hóa embeddings cho chunk, entities, facts
+        Xây dựng knowledge graph
+        Lưu trữ mọi thứ vào embedding store và graph để phục vụ retrieval'''
     def index(self, docs: List[str]):
         """
         Indexes the given documents based on the HippoRAG 2 framework which generates an OpenIE knowledge graph
@@ -232,24 +261,30 @@ class HippoRAG:
         if self.global_config.openie_mode == 'offline':
             self.pre_openie(docs)
 
-        self.chunk_embedding_store.insert_strings(docs)
-        chunk_to_rows = self.chunk_embedding_store.get_all_id_to_rows()
+        self.chunk_embedding_store.insert_strings(docs) #chia docs thành chunks và tính hash id
+        chunk_to_rows = self.chunk_embedding_store.get_all_id_to_rows() #dict: chunk_id → text
 
-        all_openie_info, chunk_keys_to_process = self.load_existing_openie(chunk_to_rows.keys())
-        new_openie_rows = {k : chunk_to_rows[k] for k in chunk_keys_to_process}
+        all_openie_info, chunk_keys_to_process = self.load_existing_openie(chunk_to_rows.keys()) # Tải lại OpenIE đã có để tránh trùng lặp
+        new_openie_rows = {k : chunk_to_rows[k] for k in chunk_keys_to_process} # Chỉ batch xử lý chunk mới
 
         if len(chunk_keys_to_process) > 0:
-            new_ner_results_dict, new_triple_results_dict = self.openie.batch_openie(new_openie_rows)
-            self.merge_openie_results(all_openie_info, new_openie_rows, new_ner_results_dict, new_triple_results_dict)
+            new_ner_results_dict, new_triple_results_dict = self.openie.batch_openie(new_openie_rows) # Extract entities and triples
+            self.merge_openie_results(all_openie_info, new_openie_rows, new_ner_results_dict, new_triple_results_dict) # Merge kết quả mới với cache
 
         if self.global_config.save_openie:
-            self.save_openie_results(all_openie_info)
+            self.save_openie_results(all_openie_info) # Cache OpenIE cho lần chạy tiếp theo
 
-        ner_results_dict, triple_results_dict = reformat_openie_results(all_openie_info)
+        ner_results_dict, triple_results_dict = reformat_openie_results(all_openie_info) # Chuyển từ raw dict sang định dạng chuẩn: entity nodes và list of triples
 
         assert len(chunk_to_rows) == len(ner_results_dict) == len(triple_results_dict), f"len(chunk_to_rows): {len(chunk_to_rows)}, len(ner_results_dict): {len(ner_results_dict)}, len(triple_results_dict): {len(triple_results_dict)}"
 
-        # prepare data_store
+        # prepare data_store: Chuẩn bị dữ liệu cho embedding và graph
+        """
+        chunk_triples → triple đã xử lý text
+        extract_entity_nodes() → lấy entities từ triple
+        flatten_facts() → trích xuất tất cả facts (subject-relation-object)
+        Dữ liệu này dùng để tạo embeddings và graph edges
+        """
         chunk_ids = list(chunk_to_rows.keys())
 
         chunk_triples = [[text_processing(t) for t in triple_results_dict[chunk_id].triples] for chunk_id in chunk_ids]
@@ -263,7 +298,14 @@ class HippoRAG:
         self.fact_embedding_store.insert_strings([str(fact) for fact in facts])
 
         logger.info(f"Constructing Graph")
-
+        """
+        Xây dựng graph
+            add_fact_edges() → thêm edges giữa entities/facts
+            add_passage_edges() → liên kết chunks chứa cùng entities
+            add_synonymy_edges() → thêm edge giữa các từ đồng nghĩa
+            augment_graph() → graph enrichment (vd: propagate edges, link neighbors)
+            save_igraph() → lưu graph ra pickle để lần sau load lại
+            """
         self.node_to_node_stats = {}
         self.ent_node_to_chunk_ids = {}
 
@@ -360,6 +402,13 @@ class HippoRAG:
 
         self.ready_to_retrieve = False
 
+    """
+    🧩 Mục đích của hàm
+        Nhận danh sách query (queries)
+        Trả về các document/facts/top-k chunks phù hợp
+        Có thể đánh giá retrieval nếu gold_docs được cung cấp
+        Có thể đánh giá retrieval nếu gold_docs được cung cấp
+    """
     def retrieve(self,
                  queries: List[str],
                  num_to_retrieve: int = None,
@@ -391,6 +440,12 @@ class HippoRAG:
         -----
         - Long queries with no relevant facts after reranking will default to results from dense passage retrieval.
         """
+        """ 1️⃣ Khởi tạo & chuẩn bị
+        num_to_retrieve → top-k docs mặc định nếu không có input
+        Nếu muốn đánh giá retrieval, khởi tạo evaluator
+        prepare_retrieval_objects() → chuẩn bị embeddings, graph, và các cấu trúc dữ liệu cần thiết
+        get_query_embeddings() → embed các query bằng embedding model đã index trước đó
+        """
         retrieve_start_time = time.time()  # Record start time
 
         if num_to_retrieve is None:
@@ -406,6 +461,10 @@ class HippoRAG:
 
         retrieval_results = []
 
+        """ 2️⃣ Loop qua từng query
+        get_fact_scores(query) → tính độ liên quan của facts dựa trên query embeddings + similarity với fact embeddings
+        rerank_facts() → graph/recognition memory reranking để chọn top-k facts đáng tin cậy
+        """
         for q_idx, query in tqdm(enumerate(queries), desc="Retrieving", total=len(queries)):
             rerank_start = time.time()
             query_fact_scores = self.get_fact_scores(query)
@@ -414,10 +473,21 @@ class HippoRAG:
 
             self.rerank_time += rerank_end - rerank_start
 
+            """3️⃣ Dense passage fallback
+            Nếu không có facts nào sau reranking, fallback sang dense passage retrieval (DPR)
+            DPR dùng chunk embeddings để tìm document gần nhất bằng similarity
+            """
             if len(top_k_facts) == 0:
                 logger.info('No facts found after reranking, return DPR results')
                 sorted_doc_ids, sorted_doc_scores = self.dense_passage_retrieval(query)
             else:
+                """4️⃣ Graph-based retrieval
+                Khi có facts top-k → dùng graph search + entity linking
+                Ý tưởng:
+                    Dựa trên facts chọn chunks liên quan
+                    Graph propagation: mở rộng liên kết entities → tìm thêm passages liên quan
+                    Kết hợp weight từ passage nodes và fact scores
+                """
                 sorted_doc_ids, sorted_doc_scores = self.graph_search_with_fact_entities(query=query,
                                                                                          link_top_k=self.global_config.linking_top_k,
                                                                                          query_fact_scores=query_fact_scores,
@@ -425,6 +495,11 @@ class HippoRAG:
                                                                                          top_k_fact_indices=top_k_fact_indices,
                                                                                          passage_node_weight=self.global_config.passage_node_weight)
 
+            """
+            5️⃣ Thu thập top-k documents
+                Lấy nội dung document từ chunk_embedding_store
+                Tạo QuerySolution object:
+            """
             top_k_docs = [self.chunk_embedding_store.get_row(self.passage_node_keys[idx])["content"] for idx in sorted_doc_ids[:num_to_retrieve]]
 
             retrieval_results.append(QuerySolution(question=query, docs=top_k_docs, doc_scores=sorted_doc_scores[:num_to_retrieve]))
@@ -1404,6 +1479,20 @@ class HippoRAG:
         assert np.count_nonzero(all_phrase_weights) == len(linking_score_map.keys())
         return all_phrase_weights, linking_score_map
 
+    """
+    🧩 Mục đích của hàm
+    Input:
+        query → query text
+        top_k_facts → các facts quan trọng liên quan query
+        query_fact_scores → độ liên quan của facts với query
+        link_top_k → số phrase quan trọng để xem xét
+    Output: 
+        ppr_sorted_doc_ids → document IDs được xếp hạng theo PPR
+        ppr_sorted_doc_scores → scores tương ứng
+        
+    Ý tưởng: Dựa vào facts liên quan, gán weights cho các node trong graph (entities + passages), kết hợp với dense passage 
+    retrieval scores, sau đó chạy Personalized PageRank để tìm documents liên quan nhất.
+    """
     def graph_search_with_fact_entities(self, query: str,
                                         link_top_k: int,
                                         query_fact_scores: np.ndarray,
@@ -1434,6 +1523,12 @@ class HippoRAG:
                 - The second array consists of the PPR scores associated with the sorted document IDs.
         """
 
+        """
+        1️⃣ Khởi tạo weights
+        phrase_weights → lưu weight cho entity nodes
+        passage_weights → lưu weight cho passage nodes
+        number_of_occurs → số lần một phrase xuất hiện trong các facts
+        linking_score_map → dùng để rerank/fallback, lưu top phrase scores"""
         #Assigning phrase weights based on selected facts from previous steps.
         linking_score_map = {}  # from phrase to the average scores of the facts that contain the phrase
         phrase_scores = {}  # store all fact scores for each phrase regardless of whether they exist in the knowledge graph or not
@@ -1442,7 +1537,13 @@ class HippoRAG:
         number_of_occurs = np.zeros(len(self.graph.vs['name']))
 
         phrases_and_ids = set()
-
+        """
+        2️⃣ Gán weights từ top-k facts
+        Mỗi subject/object entity của fact:
+            Lấy node id trong graph
+            Weight = fact_score / số chunks liên quan entity đó → giảm bias từ các entity quá phổ biến
+        Weight cộng dồn cho node
+        Ghi lại phrases_and_ids để tính trung bình sau này"""
         for rank, f in enumerate(top_k_facts):
             subject_phrase = f[0].lower()
             predicate_phrase = f[1].lower()
@@ -1468,8 +1569,13 @@ class HippoRAG:
 
                 phrases_and_ids.add((phrase, phrase_id))
 
+        """3️⃣ Tính trung bình weights
+        Node weight = average fact score nếu entity xuất hiện nhiều lần"""
         phrase_weights /= number_of_occurs
 
+        """4️⃣ Lưu scores cho reranking/phrases
+        linking_score_map = trung bình score cho mỗi phrase
+        Sau này dùng để chọn top-k phrases (link_top_k)"""
         for phrase, phrase_id in phrases_and_ids:
             if phrase not in phrase_scores:
                 phrase_scores[phrase] = []
@@ -1480,11 +1586,17 @@ class HippoRAG:
         for phrase, scores in phrase_scores.items():
             linking_score_map[phrase] = float(np.mean(scores))
 
+        """5️⃣ Lấy top-k phrases
+        Giữ những phrases quan trọng nhất để tránh quá nhiều noise"""
         if link_top_k:
             phrase_weights, linking_score_map = self.get_top_k_weights(link_top_k,
                                                                            phrase_weights,
                                                                            linking_score_map)  # at this stage, the length of linking_scope_map is determined by link_top_k
 
+        """6️⃣ Dense passage scores
+        Gọi dense passage retrieval → top-k chunks dựa trên vector similarity
+        Gán passage_weights cho các passage nodes trong grap
+        Scale theo passage_node_weight (mặc định 0.05)"""
         #Get passage scores according to chosen dense retrieval model
         dpr_sorted_doc_ids, dpr_sorted_doc_scores = self.dense_passage_retrieval(query)
         normalized_dpr_sorted_scores = min_max_normalize(dpr_sorted_doc_scores)
@@ -1497,6 +1609,9 @@ class HippoRAG:
             passage_node_text = self.chunk_embedding_store.get_row(passage_node_key)["content"]
             linking_score_map[passage_node_text] = passage_dpr_score * passage_node_weight
 
+        """7️⃣ Kết hợp phrase + passage weights
+        Tạo personalized node weights cho PPR
+        Nếu không có node nào match → báo lỗi"""
         #Combining phrase and passage scores into one array for PPR
         node_weights = phrase_weights + passage_weights
 
@@ -1507,6 +1622,9 @@ class HippoRAG:
         assert sum(node_weights) > 0, f'No phrases found in the graph for the given facts: {top_k_facts}'
 
         #Running PPR algorithm based on the passage and phrase weights previously assigned
+        """8️⃣ Chạy Personalized PageRank (PPR)
+        Dùng PPR để propagate influence từ top facts/passages qua graph
+        Kết quả: xếp hạng document IDs + scores"""
         ppr_start = time.time()
         ppr_sorted_doc_ids, ppr_sorted_doc_scores = self.run_ppr(node_weights, damping=self.global_config.damping)
         ppr_end = time.time()
@@ -1516,6 +1634,9 @@ class HippoRAG:
         assert len(ppr_sorted_doc_ids) == len(
             self.passage_node_idxs), f"Doc prob length {len(ppr_sorted_doc_ids)} != corpus length {len(self.passage_node_idxs)}"
 
+        """9️⃣ Output
+        ppr_sorted_doc_ids → danh sách document IDs theo ranking PPR
+        pr_sorted_doc_scores → scores tương ứng"""
         return ppr_sorted_doc_ids, ppr_sorted_doc_scores
 
 

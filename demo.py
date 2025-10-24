@@ -5,7 +5,8 @@ import argparse
 import logging
 
 from src.hipporag import HippoRAG
-
+from dotenv import load_dotenv
+load_dotenv()
 def main():
 
     # Prepare datasets and evaluation
@@ -23,7 +24,7 @@ def main():
 
     save_dir = 'outputs'  # Define save directory for HippoRAG objects (each LLM/Embedding model combination will create a new subdirectory)
     llm_model_name = 'gpt-4o-mini'  # Any OpenAI model name
-    embedding_model_name = 'GritLM/GritLM-7B'  # Embedding model name (NV-Embed, GritLM or Contriever for now)
+    embedding_model_name = 'text-embedding-3-small'  # Embedding model name (NV-Embed, GritLM or Contriever for now)
 
     # Startup a HippoRAG instance
     hipporag = HippoRAG(save_dir=save_dir,
@@ -59,6 +60,16 @@ def main():
     print(hipporag.rag_qa(queries=queries,
                                   gold_docs=gold_docs,
                                   gold_answers=answers))
+
+    print("#################################################################")
+    retrieval_results = hipporag.retrieve(queries=queries, num_to_retrieve=2)
+    print(retrieval_results)
+    print("#################################################################")
+    qa_results = hipporag.rag_qa(retrieval_results)
+    print(qa_results)
+
+    # # Combined Retrieval & QA
+    # rag_results = hipporag.rag_qa(queries=queries)
 
 if __name__ == "__main__":
     main()
