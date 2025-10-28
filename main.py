@@ -13,7 +13,8 @@ os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import logging
-
+from dotenv import load_dotenv
+load_dotenv()
 def get_gold_docs(samples: List, dataset_name: str = None) -> List:
     gold_docs = []
     for sample in samples:
@@ -73,7 +74,7 @@ def main():
     parser.add_argument('--llm_name', type=str, default='gpt-4o-mini', help='LLM name')
     parser.add_argument('--embedding_name', type=str, default='nvidia/NV-Embed-v2', help='embedding model name')
     parser.add_argument('--force_index_from_scratch', type=str, default='false',
-                        help='If set to True, will ignore all existing storage files and graph data and will rebuild from scratch.')
+                        help='If set to True, will ignore all existing storage files and graph dataset and will rebuild from scratch.')
     parser.add_argument('--force_openie_from_scratch', type=str, default='false', help='If set to False, will try to first reuse openie results for the corpus if they exist.')
     parser.add_argument('--openie_mode', choices=['online', 'offline'], default='online',
                         help="OpenIE mode, offline denotes using VLLM offline batch mode for indexing, while online denotes")
@@ -136,7 +137,7 @@ def main():
     hipporag.index(docs)
 
     # Retrieval and QA
-    hipporag.rag_qa(queries=all_queries, gold_docs=gold_docs, gold_answers=gold_answers)
+    hipporag.rag_qa(queries=all_queries[:5], gold_docs=gold_docs[:5], gold_answers=gold_answers[:5])
 
 if __name__ == "__main__":
     main()

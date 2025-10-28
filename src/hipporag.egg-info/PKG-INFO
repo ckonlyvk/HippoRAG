@@ -15,13 +15,14 @@ Requires-Dist: openai==1.92.0
 Requires-Dist: litellm==1.73.1
 Requires-Dist: gritlm==1.0.2
 Requires-Dist: networkx==3.4.2
-Requires-Dist: python_igraph==0.11.8
+Requires-Dist: python-igraph==0.11.8
 Requires-Dist: tiktoken==0.7.0
 Requires-Dist: pydantic==2.10.4
 Requires-Dist: tenacity==8.5.0
 Requires-Dist: einops
 Requires-Dist: tqdm
 Requires-Dist: boto3
+Requires-Dist: dotenv
 Dynamic: author
 Dynamic: author-email
 Dynamic: description

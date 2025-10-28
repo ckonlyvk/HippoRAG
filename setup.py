@@ -23,7 +23,7 @@ setuptools.setup(
         "litellm==1.73.1",
         "gritlm==1.0.2",
         "networkx==3.4.2",
-        "python_igraph==0.11.8",
+        "python-igraph==0.11.8",
         "tiktoken==0.7.0",
         "pydantic==2.10.4",
         "tenacity==8.5.0",
@@ -31,5 +31,6 @@ setuptools.setup(
         "tqdm", # No version specified
         "boto3", # No version specified
         "dotenv",
+        "torch_geometric"
     ]
 )

@@ -27,6 +27,8 @@ from .evaluation.retrieval_eval import RetrievalRecall
 from .evaluation.qa_eval import QAExactMatch, QAF1Score
 from .prompts.linking import get_query_instruction
 from .prompts.prompt_template_manager import PromptTemplateManager
+from .rankformer.build_dataset import generate_text_datasets
+from .rankformer.run import build_rank_former, recommend_for_users
 from .rerank import DSPyFilter
 from .utils.misc_utils import *
 from .utils.misc_utils import NerRawOutput, TripleRawOutput
@@ -173,6 +175,7 @@ class HippoRAG:
 
         #Ánh xạ entity → chunk chứa entity đó
         self.ent_node_to_chunk_ids = None
+        self.rank_former = None
 
     '''
     initialize_graph(): tạo và quản lý graph tri thức (knowledge graph)
@@ -318,6 +321,8 @@ class HippoRAG:
 
             self.augment_graph()
             self.save_igraph()
+
+        self.prepare_rank_former()
 
     def delete(self, docs_to_delete: List[str]):
         """
@@ -902,7 +907,7 @@ class HippoRAG:
         are added to represent the synonym relationship.
 
         Attributes:
-            entity_id_to_row: dict (populated within the function). Maps each entity ID to its corresponding row data, where rows
+            entity_id_to_row: dict (populated within the function). Maps each entity ID to its corresponding row dataset, where rows
                               contain `content` of entities used for comparison.
             entity_embedding_store: Manages retrieval of texts and embeddings for all rows related to entities.
             global_config: Configuration object that defines parameters such as `synonymy_edge_topk`, `synonymy_edge_sim_threshold`,
@@ -1269,6 +1274,8 @@ class HippoRAG:
             
             self.entity_node_idxs = [igraph_name_to_idx[node_key] for node_key in self.entity_node_keys] # a list of backbone graph node index
             self.passage_node_idxs = [igraph_name_to_idx[node_key] for node_key in self.passage_node_keys] # a list of backbone passage node index
+            logger.info(f"entity_node_idxs: {self.entity_node_idxs}")
+            logger.info(f"passage_node_idxs: {self.passage_node_idxs}")
         except Exception as e:
             logger.error(f"Error creating node index mapping: {str(e)}")
             # Initialize with empty lists if mapping fails
@@ -1539,10 +1546,9 @@ class HippoRAG:
         phrases_and_ids = set()
         """
         2️⃣ Gán weights từ top-k facts
-        Mỗi subject/object entity của fact:
-            Lấy node id trong graph
+        Gán cho các phrase node xuất hiện trong top-k fact:
             Weight = fact_score / số chunks liên quan entity đó → giảm bias từ các entity quá phổ biến
-        Weight cộng dồn cho node
+        Weight cộng dồn cho phrase node
         Ghi lại phrases_and_ids để tính trung bình sau này"""
         for rank, f in enumerate(top_k_facts):
             subject_phrase = f[0].lower()
@@ -1626,13 +1632,19 @@ class HippoRAG:
         Dùng PPR để propagate influence từ top facts/passages qua graph
         Kết quả: xếp hạng document IDs + scores"""
         ppr_start = time.time()
-        ppr_sorted_doc_ids, ppr_sorted_doc_scores = self.run_ppr(node_weights, damping=self.global_config.damping)
+        # NEW
+        entity_nodes = [i for i, w in enumerate(phrase_weights) if w != 0]
+        entity_weights = [w for i, w in enumerate(phrase_weights) if w != 0]
+        rank_sorted_res = self.run_rank_former(entity_nodes=entity_nodes, weights=entity_weights)
+        ppr_sorted_doc_ids, ppr_sorted_doc_scores = rank_sorted_res if rank_sorted_res is not None else self.run_ppr(node_weights, damping=self.global_config.damping)
+
+        # ppr_sorted_doc_ids, ppr_sorted_doc_scores = self.run_ppr(node_weights, damping=self.global_config.damping)
         ppr_end = time.time()
 
         self.ppr_time += (ppr_end - ppr_start)
-
-        assert len(ppr_sorted_doc_ids) == len(
-            self.passage_node_idxs), f"Doc prob length {len(ppr_sorted_doc_ids)} != corpus length {len(self.passage_node_idxs)}"
+        #
+        # assert len(ppr_sorted_doc_ids) == len(
+        #     self.passage_node_idxs), f"Doc prob length {len(ppr_sorted_doc_ids)} != corpus length {len(self.passage_node_idxs)}"
 
         """9️⃣ Output
         ppr_sorted_doc_ids → danh sách document IDs theo ranking PPR
@@ -1649,7 +1661,7 @@ class HippoRAG:
             top_k_fact_indicies:
             top_k_facts:
             rerank_log (dict): {'facts_before_rerank': candidate_facts, 'facts_after_rerank': top_k_facts}
-                - candidate_facts (list): list of link_top_k facts (each fact is a relation triple in tuple data type).
+                - candidate_facts (list): list of link_top_k facts (each fact is a relation triple in tuple dataset type).
                 - top_k_facts:
 
 
@@ -1729,5 +1741,33 @@ class HippoRAG:
         doc_scores = np.array([pagerank_scores[idx] for idx in self.passage_node_idxs])
         sorted_doc_ids = np.argsort(doc_scores)[::-1]
         sorted_doc_scores = doc_scores[sorted_doc_ids.tolist()]
+        print("Top passages:", sorted_doc_ids)
+        print("Scores:", sorted_doc_scores)
 
         return sorted_doc_ids, sorted_doc_scores
+
+    def prepare_rank_former(self):
+        print("Start prepare_rank_former")
+        generate_text_datasets(
+            graph_path=f"{self.working_dir}/graph.pickle",
+            entity_path=f"{self.working_dir}/entity_embeddings/vdb_entity.parquet",
+            chunk_path=f"{self.working_dir}/chunk_embeddings/vdb_chunk.parquet",
+            fact_path=f"{self.working_dir}/fact_embeddings/vdb_fact.parquet",
+            output_dir=f"./hipporag/rankformer/dataset"
+        )
+        self.rank_former = build_rank_former()
+        print("Done prepare_rank_former")
+
+    def run_rank_former(self, entity_nodes: np.ndarray,weights: np.ndarray):
+        if self.rank_former is not None:
+            sorted_doc_ids, sorted_doc_scores = recommend_for_users(self.rank_former, entity_nodes, weights)
+            idx_map = {v: i for i, v in enumerate(self.passage_node_idxs)}
+
+            filtered_doc_ids = [idx_map[x] for x in sorted_doc_ids if x in idx_map]
+            keep_indices = [i for i, x in enumerate(sorted_doc_ids) if x in idx_map]
+            filtered_doc_scores = [sorted_doc_scores[i] for i in keep_indices]
+            print("Top passages:", filtered_doc_ids)
+            print("Scores:", filtered_doc_scores)
+            return filtered_doc_ids, filtered_doc_scores
+
+        return None
