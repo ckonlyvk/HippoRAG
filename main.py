@@ -100,6 +100,7 @@ def main():
 
     force_index_from_scratch = string_to_bool(args.force_index_from_scratch)
     force_openie_from_scratch = string_to_bool(args.force_openie_from_scratch)
+    enable_rank_former = string_to_bool(args.enable_rank_former)
 
     # Prepare datasets and evaluation
     samples = json.load(open(f"reproduce/dataset/{dataset_name}.json", "r"))
@@ -130,7 +131,7 @@ def main():
         max_new_tokens=None,
         corpus_len=len(corpus),
         openie_mode=args.openie_mode,
-        enable_rank_former= args.enable_rank_former
+        enable_rank_former= enable_rank_former
     )
 
     logging.basicConfig(

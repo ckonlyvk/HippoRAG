@@ -49,7 +49,7 @@ class HippoRAG:
                  embedding_base_url=None,
                  azure_endpoint=None,
                  azure_embedding_endpoint=None,
-                 enable_rank_former=False):
+                 enable_rank_former=None):
         """
         Initializes an instance of the class and its related components.
 
@@ -112,6 +112,9 @@ class HippoRAG:
 
         if azure_embedding_endpoint is not None:
             self.global_config.azure_embedding_endpoint = azure_embedding_endpoint
+
+        if enable_rank_former is not None:
+            self.global_config.enable_rank_former = enable_rank_former
 
         _print_config = ",\n  ".join([f"{k} = {v}" for k, v in asdict(self.global_config).items()])
         logger.debug(f"HippoRAG init with config:\n  {_print_config}\n")
@@ -177,7 +180,6 @@ class HippoRAG:
         #Ánh xạ entity → chunk chứa entity đó
         self.ent_node_to_chunk_ids = None
         self.rank_former = None
-        self.global_config.enable_rank_former = enable_rank_former
 
     '''
     initialize_graph(): tạo và quản lý graph tri thức (knowledge graph)
