@@ -11,7 +11,7 @@ os.environ["OPENBLAS_NUM_THREADS"] = "10"
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(description="Graphormer")
     parser.add_argument('--seed', type=int, default=12345)
-    parser.add_argument('--device', default='cpu')#cuda:0 cuda:1
+    parser.add_argument('--device', default='cuda')#cuda:0 cuda:1
     parser.add_argument('--hidden_dim', type=int, default=64)
     # gcn
     parser.add_argument('--use_gcn', action='store_true')
