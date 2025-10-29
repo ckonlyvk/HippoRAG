@@ -1,6 +1,6 @@
 import setuptools
 
-with open("README.md", "r") as f:
+with open("README.md", "r", encoding="utf-8") as f:
     long_description = f.read()
 
 setuptools.setup(
@@ -8,13 +8,16 @@ setuptools.setup(
     version="2.0.0-alpha.4",
     author="Bernal Jimenez Gutierrez",
     author_email="jimenezgutierrez.1@osu.edu",
-    description="A powerful graph-based RAG framework that enables LLMs to identify and leverage connections within new knowledge for improved retrieval.",
+    description=(
+        "A powerful graph-based RAG framework that enables LLMs to identify "
+        "and leverage connections within new knowledge for improved retrieval."
+    ),
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/OSU-NLP-Group/HippoRAG",
     package_dir={"": "src"},
     packages=setuptools.find_packages("src"),
-    python_requires=">=3.10",
+    python_requires=">=3.12",
     install_requires=[
         "torch==2.5.1",
         "transformers==4.45.2",
@@ -27,10 +30,10 @@ setuptools.setup(
         "tiktoken==0.7.0",
         "pydantic==2.10.4",
         "tenacity==8.5.0",
-        "einops", # No version specified
-        "tqdm", # No version specified
-        "boto3", # No version specified
-        "dotenv",
+        "einops",
+        "tqdm",
+        "boto3",
+        "python-dotenv",
         "torch_geometric"
-    ]
+    ],
 )

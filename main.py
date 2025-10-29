@@ -79,6 +79,7 @@ def main():
     parser.add_argument('--openie_mode', choices=['online', 'offline'], default='online',
                         help="OpenIE mode, offline denotes using VLLM offline batch mode for indexing, while online denotes")
     parser.add_argument('--save_dir', type=str, default='outputs', help='Save directory')
+    parser.add_argument('--enable_rank_former', type=str, default='false', help='Save directory')
     args = parser.parse_args()
 
     dataset_name = args.dataset
@@ -127,7 +128,8 @@ def main():
         embedding_batch_size=8,
         max_new_tokens=None,
         corpus_len=len(corpus),
-        openie_mode=args.openie_mode
+        openie_mode=args.openie_mode,
+        enable_rank_former= args.enable_rank_former
     )
 
     logging.basicConfig(level=logging.INFO)
@@ -137,7 +139,7 @@ def main():
     hipporag.index(docs)
 
     # Retrieval and QA
-    hipporag.rag_qa(queries=all_queries[:5], gold_docs=gold_docs[:5], gold_answers=gold_answers[:5])
+    hipporag.rag_qa(queries=all_queries[:100], gold_docs=gold_docs[:100], gold_answers=gold_answers[:100])
 
 if __name__ == "__main__":
     main()

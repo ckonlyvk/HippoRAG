@@ -48,7 +48,8 @@ class HippoRAG:
                  embedding_model_name=None,
                  embedding_base_url=None,
                  azure_endpoint=None,
-                 azure_embedding_endpoint=None):
+                 azure_embedding_endpoint=None,
+                 enable_rank_former=False):
         """
         Initializes an instance of the class and its related components.
 
@@ -176,6 +177,7 @@ class HippoRAG:
         #Ánh xạ entity → chunk chứa entity đó
         self.ent_node_to_chunk_ids = None
         self.rank_former = None
+        self.global_config.enable_rank_former = enable_rank_former
 
     '''
     initialize_graph(): tạo và quản lý graph tri thức (knowledge graph)
@@ -322,7 +324,8 @@ class HippoRAG:
             self.augment_graph()
             self.save_igraph()
 
-        self.prepare_rank_former()
+        if self.global_config.enable_rank_former:
+            self.prepare_rank_former()
 
     def delete(self, docs_to_delete: List[str]):
         """
@@ -1632,13 +1635,13 @@ class HippoRAG:
         Dùng PPR để propagate influence từ top facts/passages qua graph
         Kết quả: xếp hạng document IDs + scores"""
         ppr_start = time.time()
-        # NEW
-        entity_nodes = [i for i, w in enumerate(phrase_weights) if w != 0]
-        entity_weights = [w for i, w in enumerate(phrase_weights) if w != 0]
-        rank_sorted_res = self.run_rank_former(entity_nodes=entity_nodes, weights=entity_weights)
-        ppr_sorted_doc_ids, ppr_sorted_doc_scores = rank_sorted_res if rank_sorted_res is not None else self.run_ppr(node_weights, damping=self.global_config.damping)
-
-        # ppr_sorted_doc_ids, ppr_sorted_doc_scores = self.run_ppr(node_weights, damping=self.global_config.damping)
+        if self.global_config.enable_rank_former:
+            entity_nodes = np.array([i for i, w in enumerate(phrase_weights) if w != 0])
+            entity_weights = np.array([w for i, w in enumerate(phrase_weights) if w != 0])
+            rank_sorted_res = self.run_rank_former(entity_nodes=entity_nodes, weights=entity_weights)
+            ppr_sorted_doc_ids, ppr_sorted_doc_scores = rank_sorted_res if rank_sorted_res is not None else self.run_ppr(node_weights, damping=self.global_config.damping)
+        else:
+            ppr_sorted_doc_ids, ppr_sorted_doc_scores = self.run_ppr(node_weights, damping=self.global_config.damping)
         ppr_end = time.time()
 
         self.ppr_time += (ppr_end - ppr_start)
@@ -1747,15 +1750,34 @@ class HippoRAG:
         return sorted_doc_ids, sorted_doc_scores
 
     def prepare_rank_former(self):
+        import torch
         print("Start prepare_rank_former")
-        generate_text_datasets(
-            graph_path=f"{self.working_dir}/graph.pickle",
-            entity_path=f"{self.working_dir}/entity_embeddings/vdb_entity.parquet",
-            chunk_path=f"{self.working_dir}/chunk_embeddings/vdb_chunk.parquet",
-            fact_path=f"{self.working_dir}/fact_embeddings/vdb_fact.parquet",
-            output_dir=f"./hipporag/rankformer/dataset"
-        )
-        self.rank_former = build_rank_former()
+
+        model_dir = f"{self.working_dir}/rank_former.pt"
+        if os.path.exists(model_dir):
+            self.rank_former = torch.load(model_dir, map_location="cpu")  # hoặc "cuda" nếu có GPU
+            print("✅ Loaded model from", model_dir)
+        else:
+            output_dir = f"{self.working_dir}/dataset"
+            train_dir = f"{output_dir}/train.txt"
+            valid_dir = f"{output_dir}/valid.txt"
+            test_dir = f"{output_dir}/test.txt"
+            if not os.path.exists(train_dir):
+                generate_text_datasets(
+                    graph_path=f"{self.working_dir}/graph.pickle",
+                    entity_path=f"{self.working_dir}/entity_embeddings/vdb_entity.parquet",
+                    chunk_path=f"{self.working_dir}/chunk_embeddings/vdb_chunk.parquet",
+                    fact_path=f"{self.working_dir}/fact_embeddings/vdb_fact.parquet",
+                    output_dir=f"{self.working_dir}/dataset"
+                )
+
+            self.rank_former = build_rank_former(
+                train_file=train_dir,
+                valid_file=valid_dir,
+                test_file=test_dir,
+                model_dir=model_dir
+            )
+
         print("Done prepare_rank_former")
 
     def run_rank_former(self, entity_nodes: np.ndarray,weights: np.ndarray):

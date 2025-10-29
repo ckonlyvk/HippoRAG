@@ -12,4 +12,5 @@ tenacity==8.5.0
 einops
 tqdm
 boto3
-dotenv
+python-dotenv
+torch_geometric

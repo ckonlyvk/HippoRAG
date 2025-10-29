@@ -49,7 +49,7 @@ def recommend_for_users(model, user_ids, weights=None, top_k=10):
 
     return top_items.tolist(), top_scores.tolist()
 
-def build_rank_former() -> Model:
+def build_rank_former(train_file, valid_file, test_file, model_dir) -> Model:
     best_valid_ndcg, best_epoch = 0., 0
     test_pre, test_recall, test_ndcg = torch.zeros(len(args.topks)), torch.zeros(len(args.topks)), torch.zeros(len(args.topks))
 
@@ -79,7 +79,7 @@ def build_rank_former() -> Model:
             return True
         return False
 
-    dataset = MyDataset(args.train_file, args.valid_file, args.test_file, args.device)
+    dataset = MyDataset(train_file, valid_file, test_file, args.device)
 
     model = Model(dataset).to(args.device)
     if args.load_emb:
@@ -94,8 +94,8 @@ def build_rank_former() -> Model:
     print('---------------------------')
     print('done.')
     print_test_result()
-    torch.save(model.state_dict(), "saved_model.pt")
+    torch.save(model, model_dir)
     return model
 
-if __name__ == "__main__":
-    build_rank_former()
+# if __name__ == "__main__":
+#     build_rank_former()

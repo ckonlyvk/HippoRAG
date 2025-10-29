@@ -222,6 +222,11 @@ class BaseConfig:
         default=None,
         metadata={"help": "Length of the corpus to use."}
     )
+
+    enable_rank_former: bool = field(
+        default=False,
+        metadata={"help": "Feeding top k documents to the QA model for reading."}
+    )
     
     
     def __post_init__(self):

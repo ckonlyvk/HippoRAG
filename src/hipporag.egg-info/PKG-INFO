@@ -5,7 +5,7 @@ Summary: A powerful graph-based RAG framework that enables LLMs to identify and 
 Home-page: https://github.com/OSU-NLP-Group/HippoRAG
 Author: Bernal Jimenez Gutierrez
 Author-email: jimenezgutierrez.1@osu.edu
-Requires-Python: >=3.10
+Requires-Python: >=3.12
 Description-Content-Type: text/markdown
 License-File: LICENSE
 Requires-Dist: torch==2.5.1
@@ -22,7 +22,8 @@ Requires-Dist: tenacity==8.5.0
 Requires-Dist: einops
 Requires-Dist: tqdm
 Requires-Dist: boto3
-Requires-Dist: dotenv
+Requires-Dist: python-dotenv
+Requires-Dist: torch_geometric
 Dynamic: author
 Dynamic: author-email
 Dynamic: description

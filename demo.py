@@ -28,7 +28,8 @@ def main():
     # Startup a HippoRAG instance
     hipporag = HippoRAG(save_dir=save_dir,
                         llm_model_name=llm_model_name,
-                        embedding_model_name=embedding_model_name)
+                        embedding_model_name=embedding_model_name,
+                        enable_rank_former=True)
 
     # Run indexing
     hipporag.index(docs=docs)
