@@ -1,4 +1,5 @@
 import os
+import sys
 from typing import List
 import json
 
@@ -132,7 +133,12 @@ def main():
         enable_rank_former= args.enable_rank_former
     )
 
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)],
+        force=True 
+    )
 
     hipporag = HippoRAG(global_config=config)
 
