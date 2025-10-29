@@ -17,7 +17,7 @@ setuptools.setup(
     url="https://github.com/OSU-NLP-Group/HippoRAG",
     package_dir={"": "src"},
     packages=setuptools.find_packages("src"),
-    python_requires=">=3.12",
+    python_requires=">=3.11",
     install_requires=[
         "torch==2.5.1",
         "transformers==4.45.2",
