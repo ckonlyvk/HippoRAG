@@ -10,31 +10,34 @@ import numpy as np
 def recommend_for_users(model, user_ids, weights=None, top_k=50):
     """
     Sinh gợi ý item cho 1 nhóm user bằng cách trung bình score thay vì trung bình embedding.
-    - model: instance của class Model
-    - user_ids: tensor các user id
-    - weights: trọng số (tensor có cùng chiều với user_ids) hoặc None
-    - top_k: số lượng item muốn lấy ra
+    Trả về list item và list điểm tương ứng.
     """
     model.eval()
     with torch.no_grad():
-        # Lấy embedding user & item từ model đã huấn luyện
+        device = next(model.parameters()).device
+
+        # Đảm bảo user_ids là tensor đúng device
+        user_ids = torch.as_tensor(user_ids, device=device, dtype=torch.long)
+
         user_embs = model._users[user_ids]    # (num_users, dim)
         item_embs = model._items              # (num_items, dim)
 
         # Tính score từng user-item
         scores = item_embs @ user_embs.T      # (num_items, num_users)
 
-        # Nếu có trọng số, áp dụng trọng số theo user
+        # Nếu có trọng số
         if weights is not None:
-            weights = weights / weights.sum()  # chuẩn hóa
-            scores = scores * weights          # broadcasting tự động (num_items, num_users)
+            weights = torch.as_tensor(weights, device=device, dtype=torch.float32)
+            weights = weights / weights.sum()
+            scores = scores * weights          # broadcasting tự động
 
-        # Trung bình score của các user
+        # Trung bình score qua user
         mean_scores = scores.mean(dim=1)       # (num_items,)
 
-        # Lấy top_k item tốt nhất
+        # Lấy top_k item
         top_scores, top_items = torch.topk(mean_scores, k=top_k)
-        return top_items, top_scores
+
+        return top_items.tolist(), top_scores.tolist()
 
 def build_rank_former(train_file, valid_file, test_file, model_dir) -> Model:
     best_valid_ndcg, best_epoch = 0., 0
