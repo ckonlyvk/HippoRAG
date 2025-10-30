@@ -65,7 +65,7 @@ input_args = [
     "--rankformer_tau", "0.3",
     "--learning_rate", "1e-3",
     "--valid_interval", "20",
-    "--max_epochs", "1000",
+    "--max_epochs", "2000",
     # "--stopping_step", 20
     # "--loss_batch_size", "128",
     # "--test_batch_size", "128"
