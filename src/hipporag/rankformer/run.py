@@ -9,73 +9,95 @@ import numpy as np
 
 def recommend_for_users(model, user_ids, weights=None, top_k=10, candidate_k=100):
     """
-    Recommend top-K item cho nhóm user có trọng số bằng RankFormer (retrieval + rerank).
+    Hybrid retrieval + rerank phù hợp với Model / Rankformer trong project của bạn.
 
     Args:
-        model: RankFormer đã train (phải có _users, _items, rank(), và encode_users())
-        user_ids: list các user ID
-        weights: list trọng số (nếu None → đều nhau)
-        top_k: số lượng item cuối cùng trả về
-        candidate_k: số lượng item dùng để rerank (retrieval ban đầu)
+        model: instance của class Model (không phải Rankformer trực tiếp).
+               Phải có: model._users, model._items, model.Rankformer, model.dataset
+        user_ids: 1D list/torch tensor các user id (những entity nodes)
+        weights: list/1D-tensor trọng số tương ứng với user_ids (None -> đều nhau)
+        top_k: số item cuối cùng trả về
+        candidate_k: số candidate dùng để rerank
 
     Returns:
-        final_items: list ID item được recommend
-        final_scores: list score tương ứng (sau rerank)
+        final_items: list item IDs (int)
+        final_scores: list float scores (tương ứng)
     """
-
     model.eval()
 
-    # --- 1️⃣ Đảm bảo đã có embedding retrieval ---
+    # --- đảm bảo embedding đã compute ---
     if model._users is None or model._items is None:
-        if hasattr(model, "compute"):
-            model.compute()  # hoặc model.compute_embeddings()
+        if hasattr(model, "computer"):
+            model.computer()
         else:
-            raise ValueError("Model chưa có embedding tĩnh (_users, _items).")
+            raise ValueError("Model chưa có embedding tĩnh (_users/_items) và không có method computer().")
 
     device = next(model.parameters()).device
-    user_ids = torch.tensor(user_ids, device=device)
-
-    # --- 2️⃣ Lấy embedding người dùng ---
-    user_embs = model._users[user_ids]  # [num_users, dim]
-
-    # --- 3️⃣ Gộp embedding theo trọng số (group embedding) ---
-    if weights is not None:
-        weights = torch.tensor(weights, device=device).unsqueeze(1)
-        assert weights.shape[0] == user_embs.shape[0], "weights phải khớp với số user"
-        weights = weights / weights.sum()
-        weights = weights.to(dtype=user_embs.dtype)
-        group_emb = (user_embs * weights).sum(dim=0)
+    # cast user_ids -> tensor trên device
+    if not isinstance(user_ids, torch.Tensor):
+        user_ids = torch.tensor(user_ids, device=device)
     else:
-        group_emb = user_embs.mean(dim=0)
+        user_ids = user_ids.to(device)
 
-    # --- 4️⃣ Retrieval bằng embedding tĩnh ---
-    # Có thể normalize nếu RankFormer train bằng cosine loss
-    # group_emb = F.normalize(group_emb, dim=0)
-    # items_emb = F.normalize(model._items, dim=1)
-    items_emb = model._items
+    # --- lấy embedding người dùng (tĩnh retrieval embedding) ---
+    user_embs = model._users[user_ids]              # [num_users, dim]
 
+    # --- weighted pooling để tạo group embedding ---
+    if weights is not None:
+        if not isinstance(weights, torch.Tensor):
+            weights = torch.tensor(weights, device=device)
+        else:
+            weights = weights.to(device)
+        weights = weights.squeeze()
+        if weights.dim() != 1 or weights.shape[0] != user_embs.shape[0]:
+            raise ValueError("weights phải là 1D và cùng độ dài với user_ids")
+        w = weights.unsqueeze(1).to(dtype=user_embs.dtype)
+        w = w / (w.sum() + 1e-12)
+        group_emb = (user_embs * w).sum(dim=0)     # [dim]
+    else:
+        group_emb = user_embs.mean(dim=0)           # [dim]
+
+    # --- retrieval bằng embedding tĩnh (nhanh) ---
+    items_emb = model._items                       # [num_items, dim]
+    # Nếu embeddings chưa ở cùng dtype/device, đảm bảo
+    items_emb = items_emb.to(device=device, dtype=group_emb.dtype)
     retrieval_scores = torch.matmul(items_emb, group_emb)  # [num_items]
+    candidate_k = min(candidate_k, items_emb.shape[0])
     top_scores, top_items = torch.topk(retrieval_scores, k=candidate_k)
 
-    # --- 5️⃣ Rerank bằng transformer RankFormer ---
-    # Encode lại group embedding qua transformer encoder (nếu có)
-    if hasattr(model, "encode_users"):
-        group_emb = model.encode_users(user_ids, weights=weights)
+    # --- rerank: tạo all_emb và chạy Rankformer để get refined embeddings ---
+    # all_emb giống cách model.computer() tạo: concat users + items
+    all_emb = torch.cat([model._users.to(device=device, dtype=items_emb.dtype),
+                         model._items.to(device=device, dtype=items_emb.dtype)], dim=0)
 
-    # Gọi hàm rank (chuẩn RankFormer) để rerank top-K’ item
-    if hasattr(model, "rank"):
-        reranked_scores = model.rank(group_emb, top_items)
-    elif hasattr(model, "forward"):
-        reranked_scores = model.forward(group_emb, top_items)
-    else:
-        raise ValueError("Model không có hàm rank() hoặc forward() để rerank.")
+    # dùng same (u, i) edges mà model dùng (training edges) để Rankformer hoạt động
+    u_edges = model.dataset.train_user.to(device)
+    i_edges = model.dataset.train_item.to(device)
 
-    # --- 6️⃣ Chọn top-K cuối cùng ---
-    reranked_scores = reranked_scores.squeeze()
-    final_scores, final_idx = torch.topk(reranked_scores, k=top_k)
-    final_items = top_items[final_idx]
+    # compute refined embedding bằng Rankformer
+    # Rankformer.forward expects (x, u, i) per your code
+    with torch.no_grad():
+        rec_emb = model.Rankformer(all_emb, u_edges, i_edges)
 
-    return final_items.tolist(), final_scores.tolist()
+    # combine like in computer(): all_emb = (1 - tau) * all_emb + tau * rec_emb
+    tau = getattr(args, "rankformer_tau", 1.0) if 'args' in globals() else 1.0
+    refined_all = (1.0 - tau) * all_emb + tau * rec_emb
+    # split refined item embeddings
+    n_users = model.dataset.num_users
+    refined_items = refined_all[n_users:]  # [num_items, dim]
+
+    # --- compute rerank scores only on candidates ---
+    cand_items_emb = refined_items[top_items]   # [candidate_k, dim]
+    # compute dot product between group_emb and each candidate item
+    group_emb_for_score = group_emb.to(dtype=cand_items_emb.dtype)
+    rerank_scores = torch.matmul(cand_items_emb, group_emb_for_score)  # [candidate_k]
+
+    # --- final top-k from reranked candidates ---
+    k = min(top_k, rerank_scores.shape[0])
+    final_scores, idx_in_candidates = torch.topk(rerank_scores, k=k)
+    final_items = top_items[idx_in_candidates]
+
+    return final_items.cpu().tolist(), final_scores.cpu().tolist()
 
 def build_rank_former(train_file, valid_file, test_file, model_dir) -> Model:
     best_valid_ndcg, best_epoch = 0., 0
