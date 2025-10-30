@@ -1769,7 +1769,6 @@ class HippoRAG:
                     graph_path=f"{self.working_dir}/graph.pickle",
                     entity_path=f"{self.working_dir}/entity_embeddings/vdb_entity.parquet",
                     chunk_path=f"{self.working_dir}/chunk_embeddings/vdb_chunk.parquet",
-                    fact_path=f"{self.working_dir}/fact_embeddings/vdb_fact.parquet",
                     output_dir=f"{self.working_dir}/dataset"
                 )
 
