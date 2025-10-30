@@ -64,7 +64,6 @@ input_args = [
     "--rankformer_layers", "5",
     "--rankformer_tau", "0.1",
     "--learning_rate", "1e-3",
-    "--loss_batch_size", "2048",
     "--valid_interval", "1"
 ]
 
