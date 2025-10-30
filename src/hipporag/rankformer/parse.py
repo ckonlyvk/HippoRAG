@@ -66,7 +66,7 @@ input_args = [
     "--learning_rate", "1e-3",
     "--valid_interval", "1",
     "--loss_batch_size", "128",
-    "test_batch_size", "128"
+    "--test_batch_size", "128"
 ]
 
 args = parse_args(input_args)
