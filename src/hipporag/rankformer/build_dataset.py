@@ -10,11 +10,10 @@ import pickle
 from tqdm import tqdm
 
 
-def load_embeddings(entity_path, chunk_path, fact_path):
+def load_embeddings(entity_path, chunk_path):
     entity_df = pd.read_parquet(entity_path)
     chunk_df = pd.read_parquet(chunk_path)
-    fact_df = pd.read_parquet(fact_path)
-    return entity_df, chunk_df, fact_df
+    return entity_df, chunk_df
 
 
 def generate_text_datasets(graph_path, entity_path, chunk_path,
@@ -30,7 +29,7 @@ def generate_text_datasets(graph_path, entity_path, chunk_path,
     with open(graph_path, "rb") as f:
         g: ig.Graph = pickle.load(f)
 
-    entity_df, chunk_df, _ = load_embeddings(entity_path, chunk_path, None)
+    # entity_df, chunk_df, _ = load_embeddings(entity_path, chunk_path, None)
 
     # 3️⃣ Tạo map node: hash_id -> index
     node_name_to_idx = {}
