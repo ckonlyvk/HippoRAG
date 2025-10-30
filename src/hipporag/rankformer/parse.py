@@ -61,7 +61,7 @@ input_args = [
     "--gcn_left", "0.5",
     "--gcn_right", "0.5",
     "--use_rankformer",
-    "--rankformer_layers", "3",
+    "--rankformer_layers", "4",
     "--rankformer_tau", "0.3",
     "--learning_rate", "1e-3",
     "--valid_interval", "20",
