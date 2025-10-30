@@ -7,97 +7,34 @@ from .model import Model
 import torch
 import numpy as np
 
-def recommend_for_users(model, user_ids, weights=None, top_k=10, candidate_k=100):
+def recommend_for_users(model, user_ids, weights=None, top_k=50):
     """
-    Hybrid retrieval + rerank phù hợp với Model / Rankformer trong project của bạn.
-
-    Args:
-        model: instance của class Model (không phải Rankformer trực tiếp).
-               Phải có: model._users, model._items, model.Rankformer, model.dataset
-        user_ids: 1D list/torch tensor các user id (những entity nodes)
-        weights: list/1D-tensor trọng số tương ứng với user_ids (None -> đều nhau)
-        top_k: số item cuối cùng trả về
-        candidate_k: số candidate dùng để rerank
-
-    Returns:
-        final_items: list item IDs (int)
-        final_scores: list float scores (tương ứng)
+    Sinh gợi ý item cho 1 nhóm user bằng cách trung bình score thay vì trung bình embedding.
+    - model: instance của class Model
+    - user_ids: tensor các user id
+    - weights: trọng số (tensor có cùng chiều với user_ids) hoặc None
+    - top_k: số lượng item muốn lấy ra
     """
     model.eval()
-
-    # --- đảm bảo embedding đã compute ---
-    if model._users is None or model._items is None:
-        if hasattr(model, "computer"):
-            model.computer()
-        else:
-            raise ValueError("Model chưa có embedding tĩnh (_users/_items) và không có method computer().")
-
-    device = next(model.parameters()).device
-    # cast user_ids -> tensor trên device
-    if not isinstance(user_ids, torch.Tensor):
-        user_ids = torch.tensor(user_ids, device=device)
-    else:
-        user_ids = user_ids.to(device)
-
-    # --- lấy embedding người dùng (tĩnh retrieval embedding) ---
-    user_embs = model._users[user_ids]              # [num_users, dim]
-
-    # --- weighted pooling để tạo group embedding ---
-    if weights is not None:
-        if not isinstance(weights, torch.Tensor):
-            weights = torch.tensor(weights, device=device)
-        else:
-            weights = weights.to(device)
-        weights = weights.squeeze()
-        if weights.dim() != 1 or weights.shape[0] != user_embs.shape[0]:
-            raise ValueError("weights phải là 1D và cùng độ dài với user_ids")
-        w = weights.unsqueeze(1).to(dtype=user_embs.dtype)
-        w = w / (w.sum() + 1e-12)
-        group_emb = (user_embs * w).sum(dim=0)     # [dim]
-    else:
-        group_emb = user_embs.mean(dim=0)           # [dim]
-
-    # --- retrieval bằng embedding tĩnh (nhanh) ---
-    items_emb = model._items                       # [num_items, dim]
-    # Nếu embeddings chưa ở cùng dtype/device, đảm bảo
-    items_emb = items_emb.to(device=device, dtype=group_emb.dtype)
-    retrieval_scores = torch.matmul(items_emb, group_emb)  # [num_items]
-    candidate_k = min(candidate_k, items_emb.shape[0])
-    top_scores, top_items = torch.topk(retrieval_scores, k=candidate_k)
-
-    # --- rerank: tạo all_emb và chạy Rankformer để get refined embeddings ---
-    # all_emb giống cách model.computer() tạo: concat users + items
-    all_emb = torch.cat([model._users.to(device=device, dtype=items_emb.dtype),
-                         model._items.to(device=device, dtype=items_emb.dtype)], dim=0)
-
-    # dùng same (u, i) edges mà model dùng (training edges) để Rankformer hoạt động
-    u_edges = model.dataset.train_user.to(device)
-    i_edges = model.dataset.train_item.to(device)
-
-    # compute refined embedding bằng Rankformer
-    # Rankformer.forward expects (x, u, i) per your code
     with torch.no_grad():
-        rec_emb = model.Rankformer(all_emb, u_edges, i_edges)
+        # Lấy embedding user & item từ model đã huấn luyện
+        user_embs = model._users[user_ids]    # (num_users, dim)
+        item_embs = model._items              # (num_items, dim)
 
-    # combine like in computer(): all_emb = (1 - tau) * all_emb + tau * rec_emb
-    tau = getattr(args, "rankformer_tau", 1.0) if 'args' in globals() else 1.0
-    refined_all = (1.0 - tau) * all_emb + tau * rec_emb
-    # split refined item embeddings
-    n_users = model.dataset.num_users
-    refined_items = refined_all[n_users:]  # [num_items, dim]
+        # Tính score từng user-item
+        scores = item_embs @ user_embs.T      # (num_items, num_users)
 
-    # --- compute rerank scores only on candidates ---
-    cand_items_emb = refined_items[top_items]   # [candidate_k, dim]
-    # compute dot product between group_emb and each candidate item
-    group_emb_for_score = group_emb.to(dtype=cand_items_emb.dtype)
-    rerank_scores = torch.matmul(cand_items_emb, group_emb_for_score)  # [candidate_k]
+        # Nếu có trọng số, áp dụng trọng số theo user
+        if weights is not None:
+            weights = weights / weights.sum()  # chuẩn hóa
+            scores = scores * weights          # broadcasting tự động (num_items, num_users)
 
-    # --- final top-k from reranked candidates ---
-    k = min(top_k, rerank_scores.shape[0])
-    final_scores, idx_in_candidates = torch.topk(rerank_scores, k=k)
-    final_items = top_items[idx_in_candidates]
+        # Trung bình score của các user
+        mean_scores = scores.mean(dim=1)       # (num_items,)
 
-    return final_items.cpu().tolist(), final_scores.cpu().tolist()
+        # Lấy top_k item tốt nhất
+        top_scores, top_items = torch.topk(mean_scores, k=top_k)
+        return top_items, top_scores
 
 def build_rank_former(train_file, valid_file, test_file, model_dir) -> Model:
     best_valid_ndcg, best_epoch = 0., 0
