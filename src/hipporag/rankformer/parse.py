@@ -61,10 +61,12 @@ input_args = [
     "--gcn_left", "0.5",
     "--gcn_right", "0.5",
     "--use_rankformer",
-    "--rankformer_layers", "5",
+    "--rankformer_layers", "3",
     "--rankformer_tau", "0.1",
     "--learning_rate", "1e-3",
-    "--valid_interval", "1"
+    "--valid_interval", "1",
+    "--loss_batch_size", "128",
+    "test_batch_size", "128"
 ]
 
 args = parse_args(input_args)
