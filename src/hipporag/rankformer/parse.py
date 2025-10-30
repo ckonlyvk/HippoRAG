@@ -35,7 +35,7 @@ def parse_args(input_args=None):
     parser.add_argument('--learning_rate', type=float, default=1e-1)
     parser.add_argument('--reg_lambda', type=float, default=1e-4)
     parser.add_argument('--loss_batch_size', type=int, default=0)
-    parser.add_argument('--max_epochs', type=int, default=300) # 2000
+    parser.add_argument('--max_epochs', type=int, default=1000) # 2000
     parser.add_argument('--show_loss_interval', type=int, default=1)
     # Test
     parser.add_argument('--topks', type=str, default='[20]')
