@@ -54,12 +54,19 @@ def parse_args(input_args=None):
 
 
 input_args = [
-        "--data", "dataset",
-        "--use_gcn",
-        "--use_rankformer",
-        "--rankformer_layers", "4",
-        "--rankformer_tau", "0.5"
-    ]
+    "--data", "dataset",
+    "--use_cl",
+    "--use_gcn",
+    "--gcn_layers", "2",
+    "--gcn_left", "0.5",
+    "--gcn_right", "0.5",
+    "--use_rankformer",
+    "--rankformer_layers", "5",
+    "--rankformer_tau", "0.1",
+    "--learning_rate", "1e-3",
+    "--loss_batch_size", "2048",
+    "--valid_interval", "1"
+]
 
 args = parse_args(input_args)
 args.topks = eval(args.topks)
